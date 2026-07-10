@@ -26,6 +26,11 @@ program.exitOverride();
 try {
   await program.parseAsync(process.argv);
 } catch (error) {
+  if (error.code === 'commander.helpDisplayed') {
+    process.exitCode = 0;
+    process.exit();
+  }
+
   console.error(error.message);
   process.exitCode = error.exitCode || 1;
 }
