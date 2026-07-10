@@ -1,0 +1,21 @@
+export const JOB_COLUMNS = `
+  id,
+  command,
+  state,
+  attempts,
+  max_retries,
+  worker_id,
+  next_retry_at,
+  run_at,
+  priority,
+  timeout_ms,
+  created_at,
+  updated_at,
+  started_at,
+  completed_at,
+  last_error,
+  stdout,
+  stderr,
+  exit_code,
+  duration_ms
+`;

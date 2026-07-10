@@ -1,0 +1,34 @@
+{
+  "name": "queuectl",
+  "version": "1.0.0",
+  "description": "A SQLite-backed CLI background job queue built from scratch.",
+  "type": "module",
+  "bin": {
+    "queuectl": "./src/cli/index.js"
+  },
+  "scripts": {
+    "start": "node src/cli/index.js",
+    "test": "node --experimental-vm-modules node_modules/jest/bin/jest.js --runInBand",
+    "demo": "node scripts/demo.js"
+  },
+  "keywords": [
+    "queue",
+    "cli",
+    "sqlite",
+    "worker",
+    "jobs"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.8.1",
+    "commander": "^12.1.0",
+    "uuid": "^11.0.5"
+  },
+  "devDependencies": {
+    "jest": "^29.7.0"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}
