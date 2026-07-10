@@ -6,8 +6,9 @@ export class WorkerService {
     this.workerRepository = workerRepository;
   }
 
-  shouldStop() {
-    return this.configRepository.getBoolean(CONFIG_KEYS.WORKER_STOP_REQUESTED);
+  shouldStop(workerId) {
+    return this.workerRepository.shouldStop(workerId)
+      || this.configRepository.getBoolean(CONFIG_KEYS.WORKER_STOP_REQUESTED);
   }
 
   getPollIntervalMs() {
@@ -36,5 +37,9 @@ export class WorkerService {
 
   stop(workerId) {
     this.workerRepository.markStopped(workerId);
+  }
+
+  requestStopForRunningWorkers() {
+    return this.workerRepository.requestStopForRunning();
   }
 }

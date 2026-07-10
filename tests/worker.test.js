@@ -1,7 +1,10 @@
 import { describe, expect, test } from '@jest/globals';
 import { Worker } from '../src/core/Worker.js';
 import { createDatabase } from '../src/database/db.js';
+import { ConfigRepository } from '../src/repositories/ConfigRepository.js';
 import { JobRepository } from '../src/repositories/JobRepository.js';
+import { WorkerRepository } from '../src/repositories/WorkerRepository.js';
+import { WorkerService } from '../src/services/WorkerService.js';
 import { createTempContext, FakeExecutor, failureResult, successResult } from './helpers.js';
 
 describe('worker execution', () => {
@@ -247,6 +250,64 @@ describe('worker execution', () => {
       const workers = context.workerRepository.list();
       expect(workers[0].status).toBe('stopped');
     } finally {
+      context.close();
+    }
+  });
+
+  test('stops a worker from another database connection after its current job finishes', async () => {
+    const context = createTempContext();
+    let stopDb;
+
+    try {
+      context.configService.set('poll-interval-ms', '10');
+      context.jobService.enqueue('{"id":"first","command":"sleep"}');
+      context.jobService.enqueue('{"id":"second","command":"echo later"}');
+
+      let finishExecution;
+      let startedExecution;
+      const jobStarted = new Promise((resolve) => {
+        startedExecution = resolve;
+      });
+      const executor = {
+        execute: () => {
+          startedExecution();
+          return new Promise((resolve) => {
+            finishExecution = () => resolve(successResult);
+          });
+        }
+      };
+      const worker = new Worker({
+        workerId: 'worker-1',
+        jobRepository: context.jobRepository,
+        configRepository: context.configRepository,
+        workerService: context.workerService,
+        executor,
+        logger: context.logger
+      });
+
+      const running = worker.start();
+      await jobStarted;
+
+      stopDb = createDatabase(context.dbPath);
+      const stopWorkerService = new WorkerService(
+        new ConfigRepository(stopDb),
+        new WorkerRepository(stopDb)
+      );
+      expect(stopWorkerService.requestStopForRunningWorkers()).toBe(1);
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      expect(context.jobRepository.findById('first').state).toBe('processing');
+
+      finishExecution();
+      await running;
+
+      expect(context.jobRepository.findById('first').state).toBe('completed');
+      expect(context.jobRepository.findById('second').state).toBe('pending');
+      expect(context.workerRepository.list()[0].status).toBe('stopped');
+    } finally {
+      if (stopDb?.open) {
+        stopDb.close();
+      }
       context.close();
     }
   });

@@ -25,11 +25,11 @@ export async function startWorkerCommand(options = {}) {
 }
 
 export function stopWorkerCommand() {
-  const { db, configService } = createAppContext();
+  const { db, workerService } = createAppContext();
 
   try {
-    configService.requestWorkerStop();
-    console.log('Stop requested. Running workers will finish their current job and exit.');
+    const count = workerService.requestStopForRunningWorkers();
+    console.log(`Stop requested for ${count} running worker(s). Workers will finish their current job and exit.`);
   } finally {
     db.close();
   }

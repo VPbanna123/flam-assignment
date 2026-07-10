@@ -47,12 +47,14 @@ export function initializeSchema(db) {
       status TEXT NOT NULL,
       heartbeat_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      stop_requested_at TEXT,
       stopped_at TEXT
     );
   `);
 
   ensureColumn(db, 'jobs', 'heartbeat_at', 'TEXT');
   ensureColumn(db, 'jobs', 'lease_expires_at', 'TEXT');
+  ensureColumn(db, 'workers', 'stop_requested_at', 'TEXT');
 
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_jobs_expired_lease

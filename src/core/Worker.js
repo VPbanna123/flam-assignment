@@ -34,7 +34,7 @@ export class Worker {
     this.logger.info('worker.started', { workerId: this.workerId });
 
     try {
-      while (!this.stopping && !this.workerService.shouldStop()) {
+      while (!this.stopping && !this.workerService.shouldStop(this.workerId)) {
         this.workerService.heartbeat(this.workerId);
         this.recoverExpiredJobs();
         const job = this.lockManager.claimNext(this.workerId, {

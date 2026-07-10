@@ -9,11 +9,12 @@ export class WorkerRepository {
   register(workerId) {
     const timestamp = nowIso();
     this.db.prepare(`
-      INSERT INTO workers (worker_id, status, heartbeat_at, created_at, stopped_at)
-      VALUES (?, ?, ?, ?, NULL)
+      INSERT INTO workers (worker_id, status, heartbeat_at, created_at, stop_requested_at, stopped_at)
+      VALUES (?, ?, ?, ?, NULL, NULL)
       ON CONFLICT(worker_id) DO UPDATE SET
         status = excluded.status,
         heartbeat_at = excluded.heartbeat_at,
+        stop_requested_at = NULL,
         stopped_at = NULL
     `).run(workerId, WORKER_STATUS.RUNNING, timestamp, timestamp);
   }
@@ -35,6 +36,27 @@ export class WorkerRepository {
     `).run(WORKER_STATUS.STOPPED, timestamp, timestamp, workerId);
   }
 
+  requestStopForRunning() {
+    const timestamp = nowIso();
+    return this.db.prepare(`
+      UPDATE workers
+      SET stop_requested_at = ?
+      WHERE status = ?
+        AND stop_requested_at IS NULL
+    `).run(timestamp, WORKER_STATUS.RUNNING).changes;
+  }
+
+  shouldStop(workerId) {
+    const row = this.db.prepare(`
+      SELECT stop_requested_at
+      FROM workers
+      WHERE worker_id = ?
+        AND status = ?
+    `).get(workerId, WORKER_STATUS.RUNNING);
+
+    return Boolean(row?.stop_requested_at);
+  }
+
   countRunning({ staleAfterMs = 15000 } = {}) {
     const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
     const row = this.db.prepare(`
@@ -49,7 +71,7 @@ export class WorkerRepository {
 
   list() {
     return this.db.prepare(`
-      SELECT worker_id, status, heartbeat_at, created_at, stopped_at
+      SELECT worker_id, status, heartbeat_at, created_at, stop_requested_at, stopped_at
       FROM workers
       ORDER BY heartbeat_at DESC
     `).all();
