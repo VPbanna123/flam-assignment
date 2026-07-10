@@ -30,7 +30,7 @@ export class Worker {
   }
 
   async start() {
-    this.workerService.register(this.workerId);
+    this.workerService.register(this.workerId, { pid: process.pid });
     this.logger.info('worker.started', { workerId: this.workerId });
 
     try {

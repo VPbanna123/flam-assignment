@@ -38,13 +38,16 @@ export class JobService {
 
   status(workerRepository) {
     const counts = this.jobRepository.countByState();
+    const activeWorkers = workerRepository.listActive();
+
     return {
       pending: counts.pending || 0,
       processing: counts.processing || 0,
       completed: counts.completed || 0,
       failed: counts.failed || 0,
       dead: counts.dead || 0,
-      runningWorkers: workerRepository.countRunning()
+      runningWorkers: activeWorkers.length,
+      activeWorkers
     };
   }
 

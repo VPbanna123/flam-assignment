@@ -312,6 +312,47 @@ describe('worker execution', () => {
     }
   });
 
+  test('stores worker registry metadata for active workers', () => {
+    const context = createTempContext();
+
+    try {
+      context.workerRepository.register('worker-meta', { pid: 12345 });
+
+      const activeWorkers = context.workerRepository.listActive();
+
+      expect(activeWorkers).toHaveLength(1);
+      expect(activeWorkers[0]).toEqual(expect.objectContaining({
+        worker_id: 'worker-meta',
+        pid: 12345,
+        status: 'running'
+      }));
+      expect(activeWorkers[0].started_at).toBeTruthy();
+      expect(activeWorkers[0].last_heartbeat).toBeTruthy();
+    } finally {
+      context.close();
+    }
+  });
+
+  test('removes stale workers from the active registry automatically', () => {
+    const context = createTempContext();
+
+    try {
+      context.workerRepository.register('stale-worker', { pid: 12345 });
+      const staleHeartbeat = new Date(Date.now() - 60000).toISOString();
+      context.db.prepare(`
+        UPDATE workers
+        SET heartbeat_at = ?,
+            last_heartbeat = ?
+        WHERE worker_id = ?
+      `).run(staleHeartbeat, staleHeartbeat, 'stale-worker');
+
+      expect(context.workerRepository.listActive({ staleAfterMs: 15000 })).toHaveLength(0);
+      expect(context.workerRepository.list()[0].status).toBe('stopped');
+    } finally {
+      context.close();
+    }
+  });
+
   test('renews a job lease while processing a long-running job', async () => {
     const context = createTempContext();
 

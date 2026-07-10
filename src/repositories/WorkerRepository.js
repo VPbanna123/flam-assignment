@@ -6,34 +6,53 @@ export class WorkerRepository {
     this.db = db;
   }
 
-  register(workerId) {
+  register(workerId, { pid = process.pid } = {}) {
     const timestamp = nowIso();
     this.db.prepare(`
-      INSERT INTO workers (worker_id, status, heartbeat_at, created_at, stop_requested_at, stopped_at)
-      VALUES (?, ?, ?, ?, NULL, NULL)
+      INSERT INTO workers (
+        worker_id, pid, status, heartbeat_at, created_at, started_at,
+        last_heartbeat, stop_requested_at, stopped_at
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, NULL, NULL)
       ON CONFLICT(worker_id) DO UPDATE SET
+        pid = excluded.pid,
         status = excluded.status,
         heartbeat_at = excluded.heartbeat_at,
+        started_at = excluded.started_at,
+        last_heartbeat = excluded.last_heartbeat,
         stop_requested_at = NULL,
         stopped_at = NULL
-    `).run(workerId, WORKER_STATUS.RUNNING, timestamp, timestamp);
+    `).run(
+      workerId,
+      pid,
+      WORKER_STATUS.RUNNING,
+      timestamp,
+      timestamp,
+      timestamp,
+      timestamp
+    );
   }
 
   heartbeat(workerId) {
+    const timestamp = nowIso();
     this.db.prepare(`
       UPDATE workers
-      SET heartbeat_at = ?
+      SET heartbeat_at = ?,
+          last_heartbeat = ?
       WHERE worker_id = ?
-    `).run(nowIso(), workerId);
+    `).run(timestamp, timestamp, workerId);
   }
 
   markStopped(workerId) {
     const timestamp = nowIso();
     this.db.prepare(`
       UPDATE workers
-      SET status = ?, heartbeat_at = ?, stopped_at = ?
+      SET status = ?,
+          heartbeat_at = ?,
+          last_heartbeat = ?,
+          stopped_at = ?
       WHERE worker_id = ?
-    `).run(WORKER_STATUS.STOPPED, timestamp, timestamp, workerId);
+    `).run(WORKER_STATUS.STOPPED, timestamp, timestamp, timestamp, workerId);
   }
 
   requestStopForRunning() {
@@ -58,22 +77,61 @@ export class WorkerRepository {
   }
 
   countRunning({ staleAfterMs = 15000 } = {}) {
+    this.removeStale({ staleAfterMs });
     const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
     const row = this.db.prepare(`
       SELECT COUNT(*) AS count
       FROM workers
       WHERE status = ?
-        AND heartbeat_at >= ?
+        AND COALESCE(last_heartbeat, heartbeat_at) >= ?
     `).get(WORKER_STATUS.RUNNING, cutoff);
 
     return row.count;
   }
 
+  listActive({ staleAfterMs = 15000 } = {}) {
+    this.removeStale({ staleAfterMs });
+    const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
+    return this.db.prepare(`
+      SELECT
+        worker_id,
+        pid,
+        COALESCE(started_at, created_at) AS started_at,
+        COALESCE(last_heartbeat, heartbeat_at) AS last_heartbeat,
+        status
+      FROM workers
+      WHERE status = ?
+        AND COALESCE(last_heartbeat, heartbeat_at) >= ?
+      ORDER BY COALESCE(last_heartbeat, heartbeat_at) DESC
+    `).all(WORKER_STATUS.RUNNING, cutoff);
+  }
+
+  removeStale({ staleAfterMs = 15000 } = {}) {
+    const cutoff = new Date(Date.now() - staleAfterMs).toISOString();
+    const timestamp = nowIso();
+    return this.db.prepare(`
+      UPDATE workers
+      SET status = ?,
+          stopped_at = ?
+      WHERE status = ?
+        AND COALESCE(last_heartbeat, heartbeat_at) < ?
+    `).run(WORKER_STATUS.STOPPED, timestamp, WORKER_STATUS.RUNNING, cutoff).changes;
+  }
+
   list() {
     return this.db.prepare(`
-      SELECT worker_id, status, heartbeat_at, created_at, stop_requested_at, stopped_at
+      SELECT
+        worker_id,
+        pid,
+        status,
+        heartbeat_at,
+        created_at,
+        COALESCE(started_at, created_at) AS started_at,
+        COALESCE(last_heartbeat, heartbeat_at) AS last_heartbeat,
+        stop_requested_at,
+        stopped_at
       FROM workers
-      ORDER BY heartbeat_at DESC
+      ORDER BY COALESCE(last_heartbeat, heartbeat_at) DESC
     `).all();
   }
 }

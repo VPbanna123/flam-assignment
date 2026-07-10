@@ -27,8 +27,8 @@ export class WorkerService {
     return this.configRepository.getNumber(CONFIG_KEYS.RECOVERY_INTERVAL_MS);
   }
 
-  register(workerId) {
-    this.workerRepository.register(workerId);
+  register(workerId, options) {
+    this.workerRepository.register(workerId, options);
   }
 
   heartbeat(workerId) {

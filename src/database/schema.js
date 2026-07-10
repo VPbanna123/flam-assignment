@@ -44,9 +44,12 @@ export function initializeSchema(db) {
 
     CREATE TABLE IF NOT EXISTS workers (
       worker_id TEXT PRIMARY KEY,
+      pid INTEGER,
       status TEXT NOT NULL,
       heartbeat_at TEXT NOT NULL,
       created_at TEXT NOT NULL,
+      started_at TEXT,
+      last_heartbeat TEXT,
       stop_requested_at TEXT,
       stopped_at TEXT
     );
@@ -54,6 +57,9 @@ export function initializeSchema(db) {
 
   ensureColumn(db, 'jobs', 'heartbeat_at', 'TEXT');
   ensureColumn(db, 'jobs', 'lease_expires_at', 'TEXT');
+  ensureColumn(db, 'workers', 'pid', 'INTEGER');
+  ensureColumn(db, 'workers', 'started_at', 'TEXT');
+  ensureColumn(db, 'workers', 'last_heartbeat', 'TEXT');
   ensureColumn(db, 'workers', 'stop_requested_at', 'TEXT');
 
   db.exec(`
