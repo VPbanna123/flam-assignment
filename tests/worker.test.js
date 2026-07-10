@@ -145,6 +145,70 @@ describe('worker execution', () => {
     }
   });
 
+  test('claims jobs with a renewable processing lease', () => {
+    const context = createTempContext();
+
+    try {
+      context.jobService.enqueue('{"id":"leased","command":"echo leased"}');
+
+      const before = Date.now();
+      const claimed = context.jobRepository.claimNext('worker-1', { leaseMs: 30000 });
+      const after = Date.now();
+
+      expect(claimed.id).toBe('leased');
+      expect(claimed.heartbeat_at).not.toBeNull();
+      expect(new Date(claimed.lease_expires_at).getTime()).toBeGreaterThanOrEqual(before + 30000);
+      expect(new Date(claimed.lease_expires_at).getTime()).toBeLessThanOrEqual(after + 30050);
+    } finally {
+      context.close();
+    }
+  });
+
+  test('renews the lease for the owning worker only', () => {
+    const context = createTempContext();
+
+    try {
+      context.jobService.enqueue('{"id":"renew","command":"echo renew"}');
+      const claimed = context.jobRepository.claimNext('worker-1', { leaseMs: 1 });
+
+      const renewed = context.jobRepository.renewLease('renew', 'worker-1', { leaseMs: 30000 });
+      const rejected = context.jobRepository.renewLease('renew', 'worker-2', { leaseMs: 30000 });
+      const job = context.jobRepository.findById('renew');
+
+      expect(claimed.worker_id).toBe('worker-1');
+      expect(renewed).toBe(true);
+      expect(rejected).toBe(false);
+      expect(job.worker_id).toBe('worker-1');
+      expect(new Date(job.lease_expires_at).getTime()).toBeGreaterThan(Date.now());
+    } finally {
+      context.close();
+    }
+  });
+
+  test('recovers expired processing jobs back to pending', () => {
+    const context = createTempContext();
+
+    try {
+      context.jobService.enqueue('{"id":"expired","command":"echo expired"}');
+      context.jobRepository.claimNext('worker-1', { leaseMs: 1 });
+
+      const recovered = context.jobRepository.recoverExpiredProcessingJobs(
+        new Date(Date.now() + 1000).toISOString()
+      );
+      const job = context.jobRepository.findById('expired');
+
+      expect(recovered).toHaveLength(1);
+      expect(recovered[0].id).toBe('expired');
+      expect(job.state).toBe('pending');
+      expect(job.worker_id).toBeNull();
+      expect(job.heartbeat_at).toBeNull();
+      expect(job.lease_expires_at).toBeNull();
+      expect(job.last_error).toBe('Worker lease expired while processing');
+    } finally {
+      context.close();
+    }
+  });
+
   test('multiple workers claim different jobs', () => {
     const context = createTempContext();
 
@@ -182,6 +246,47 @@ describe('worker execution', () => {
 
       const workers = context.workerRepository.list();
       expect(workers[0].status).toBe('stopped');
+    } finally {
+      context.close();
+    }
+  });
+
+  test('renews a job lease while processing a long-running job', async () => {
+    const context = createTempContext();
+
+    try {
+      context.configService.set('job-lease-ms', '50');
+      context.configService.set('job-heartbeat-interval-ms', '10');
+      context.jobService.enqueue('{"id":"long","command":"sleep"}');
+
+      let finishExecution;
+      const executor = {
+        execute: () => new Promise((resolve) => {
+          finishExecution = () => resolve(successResult);
+        })
+      };
+      const worker = new Worker({
+        workerId: 'worker-1',
+        jobRepository: context.jobRepository,
+        configRepository: context.configRepository,
+        workerService: context.workerService,
+        executor,
+        logger: context.logger
+      });
+
+      const job = context.jobRepository.claimNext('worker-1', { leaseMs: 50 });
+      const initialLeaseExpiresAt = context.jobRepository.findById('long').lease_expires_at;
+      const processing = worker.processJob(job);
+
+      await new Promise((resolve) => setTimeout(resolve, 25));
+      const renewedLeaseExpiresAt = context.jobRepository.findById('long').lease_expires_at;
+      finishExecution();
+      await processing;
+
+      expect(new Date(renewedLeaseExpiresAt).getTime()).toBeGreaterThan(
+        new Date(initialLeaseExpiresAt).getTime()
+      );
+      expect(context.jobRepository.findById('long').state).toBe('completed');
     } finally {
       context.close();
     }

@@ -20,6 +20,8 @@ export function initializeSchema(db) {
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
+      heartbeat_at TEXT,
+      lease_expires_at TEXT,
       completed_at TEXT,
       last_error TEXT,
       stdout TEXT,
@@ -49,6 +51,14 @@ export function initializeSchema(db) {
     );
   `);
 
+  ensureColumn(db, 'jobs', 'heartbeat_at', 'TEXT');
+  ensureColumn(db, 'jobs', 'lease_expires_at', 'TEXT');
+
+  db.exec(`
+    CREATE INDEX IF NOT EXISTS idx_jobs_expired_lease
+      ON jobs (state, lease_expires_at);
+  `);
+
   const insertDefault = db.prepare(`
     INSERT OR IGNORE INTO config (key, value, updated_at)
     VALUES (@key, @value, @updated_at)
@@ -57,5 +67,14 @@ export function initializeSchema(db) {
   const now = new Date().toISOString();
   for (const [key, value] of Object.entries(DEFAULT_CONFIG)) {
     insertDefault.run({ key, value, updated_at: now });
+  }
+}
+
+function ensureColumn(db, tableName, columnName, definition) {
+  const columns = db.prepare(`PRAGMA table_info(${tableName})`).all();
+  const exists = columns.some((column) => column.name === columnName);
+
+  if (!exists) {
+    db.exec(`ALTER TABLE ${tableName} ADD COLUMN ${columnName} ${definition}`);
   }
 }

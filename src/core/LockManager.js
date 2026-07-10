@@ -3,7 +3,7 @@ export class LockManager {
     this.jobRepository = jobRepository;
   }
 
-  claimNext(workerId) {
-    return this.jobRepository.claimNext(workerId);
+  claimNext(workerId, options) {
+    return this.jobRepository.claimNext(workerId, options);
   }
 }

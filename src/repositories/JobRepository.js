@@ -50,9 +50,10 @@ export class JobRepository {
     return Object.fromEntries(rows.map((row) => [row.state, row.count]));
   }
 
-  claimNext(workerId) {
+  claimNext(workerId, { leaseMs = 30000 } = {}) {
     const claim = this.db.transaction(() => {
       const now = nowIso();
+      const leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
       const candidate = this.db.prepare(`
         SELECT id
         FROM jobs
@@ -71,13 +72,15 @@ export class JobRepository {
         UPDATE jobs
         SET state = 'processing',
             worker_id = ?,
+            heartbeat_at = ?,
+            lease_expires_at = ?,
             started_at = ?,
             updated_at = ?
         WHERE id = ?
           AND state IN ('pending', 'failed')
           AND next_retry_at <= ?
           AND run_at <= ?
-      `).run(workerId, now, now, candidate.id, now, now);
+      `).run(workerId, now, leaseExpiresAt, now, now, candidate.id, now, now);
 
       if (result.changes !== 1) {
         return null;
@@ -89,11 +92,67 @@ export class JobRepository {
     return claim();
   }
 
-  markCompleted(id, result) {
+  renewLease(id, workerId, { leaseMs = 30000 } = {}) {
     const timestamp = nowIso();
-    this.db.prepare(`
+    const leaseExpiresAt = new Date(Date.now() + leaseMs).toISOString();
+    const result = this.db.prepare(`
+      UPDATE jobs
+      SET heartbeat_at = ?,
+          lease_expires_at = ?,
+          updated_at = ?
+      WHERE id = ?
+        AND worker_id = ?
+        AND state = 'processing'
+    `).run(timestamp, leaseExpiresAt, timestamp, id, workerId);
+
+    return result.changes === 1;
+  }
+
+  recoverExpiredProcessingJobs(cutoffIso = nowIso()) {
+    const recover = this.db.transaction(() => {
+      const expiredJobs = this.db.prepare(`
+        SELECT id, worker_id, lease_expires_at
+        FROM jobs
+        WHERE state = 'processing'
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at <= ?
+      `).all(cutoffIso);
+
+      if (expiredJobs.length === 0) {
+        return [];
+      }
+
+      const timestamp = nowIso();
+      this.db.prepare(`
+        UPDATE jobs
+        SET state = 'pending',
+            worker_id = NULL,
+            heartbeat_at = NULL,
+            lease_expires_at = NULL,
+            started_at = NULL,
+            next_retry_at = ?,
+            last_error = 'Worker lease expired while processing',
+            updated_at = ?
+        WHERE state = 'processing'
+          AND lease_expires_at IS NOT NULL
+          AND lease_expires_at <= ?
+      `).run(timestamp, timestamp, cutoffIso);
+
+      return expiredJobs;
+    });
+
+    return recover();
+  }
+
+  markCompleted(id, result, workerId = null) {
+    const timestamp = nowIso();
+    const ownershipFilter = workerId ? 'AND worker_id = @worker_id AND state = \'processing\'' : '';
+    const update = this.db.prepare(`
       UPDATE jobs
       SET state = 'completed',
+          worker_id = NULL,
+          heartbeat_at = NULL,
+          lease_expires_at = NULL,
           stdout = @stdout,
           stderr = @stderr,
           exit_code = @exit_code,
@@ -102,8 +161,10 @@ export class JobRepository {
           updated_at = @updated_at,
           last_error = NULL
       WHERE id = @id
+      ${ownershipFilter}
     `).run({
       id,
+      worker_id: workerId,
       stdout: result.stdout,
       stderr: result.stderr,
       exit_code: result.exitCode,
@@ -111,15 +172,20 @@ export class JobRepository {
       completed_at: timestamp,
       updated_at: timestamp
     });
+
+    return update.changes === 1;
   }
 
-  markRetryableFailure(id, failure) {
+  markRetryableFailure(id, failure, workerId = null) {
     const timestamp = nowIso();
-    this.db.prepare(`
+    const ownershipFilter = workerId ? 'AND worker_id = @worker_id AND state = \'processing\'' : '';
+    const update = this.db.prepare(`
       UPDATE jobs
       SET state = 'failed',
           attempts = @attempts,
           worker_id = NULL,
+          heartbeat_at = NULL,
+          lease_expires_at = NULL,
           next_retry_at = @next_retry_at,
           stdout = @stdout,
           stderr = @stderr,
@@ -128,8 +194,10 @@ export class JobRepository {
           last_error = @last_error,
           updated_at = @updated_at
       WHERE id = @id
+      ${ownershipFilter}
     `).run({
       id,
+      worker_id: workerId,
       attempts: failure.attempts,
       next_retry_at: failure.nextRetryAt,
       stdout: failure.stdout,
@@ -139,15 +207,20 @@ export class JobRepository {
       last_error: failure.errorMessage,
       updated_at: timestamp
     });
+
+    return update.changes === 1;
   }
 
-  markDead(id, failure) {
+  markDead(id, failure, workerId = null) {
     const timestamp = nowIso();
-    this.db.prepare(`
+    const ownershipFilter = workerId ? 'AND worker_id = @worker_id AND state = \'processing\'' : '';
+    const update = this.db.prepare(`
       UPDATE jobs
       SET state = 'dead',
           attempts = @attempts,
           worker_id = NULL,
+          heartbeat_at = NULL,
+          lease_expires_at = NULL,
           stdout = @stdout,
           stderr = @stderr,
           exit_code = @exit_code,
@@ -156,8 +229,10 @@ export class JobRepository {
           completed_at = @completed_at,
           updated_at = @updated_at
       WHERE id = @id
+      ${ownershipFilter}
     `).run({
       id,
+      worker_id: workerId,
       attempts: failure.attempts,
       stdout: failure.stdout,
       stderr: failure.stderr,
@@ -167,6 +242,8 @@ export class JobRepository {
       completed_at: timestamp,
       updated_at: timestamp
     });
+
+    return update.changes === 1;
   }
 
   retryDead(id) {
@@ -176,6 +253,8 @@ export class JobRepository {
       SET state = 'pending',
           attempts = 0,
           worker_id = NULL,
+          heartbeat_at = NULL,
+          lease_expires_at = NULL,
           next_retry_at = ?,
           run_at = ?,
           updated_at = ?,
@@ -188,14 +267,6 @@ export class JobRepository {
   }
 
   resetStaleProcessingJobs(cutoffIso) {
-    return this.db.prepare(`
-      UPDATE jobs
-      SET state = 'failed',
-          worker_id = NULL,
-          last_error = 'Worker heartbeat expired while processing',
-          updated_at = ?
-      WHERE state = 'processing'
-        AND started_at <= ?
-    `).run(nowIso(), cutoffIso).changes;
+    return this.recoverExpiredProcessingJobs(cutoffIso).length;
   }
 }

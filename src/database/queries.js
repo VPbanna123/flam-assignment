@@ -12,6 +12,8 @@ export const JOB_COLUMNS = `
   created_at,
   updated_at,
   started_at,
+  heartbeat_at,
+  lease_expires_at,
   completed_at,
   last_error,
   stdout,

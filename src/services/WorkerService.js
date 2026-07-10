@@ -14,6 +14,18 @@ export class WorkerService {
     return this.configRepository.getNumber(CONFIG_KEYS.POLL_INTERVAL_MS);
   }
 
+  getJobLeaseMs() {
+    return this.configRepository.getNumber(CONFIG_KEYS.JOB_LEASE_MS);
+  }
+
+  getJobHeartbeatIntervalMs() {
+    return this.configRepository.getNumber(CONFIG_KEYS.JOB_HEARTBEAT_INTERVAL_MS);
+  }
+
+  getRecoveryIntervalMs() {
+    return this.configRepository.getNumber(CONFIG_KEYS.RECOVERY_INTERVAL_MS);
+  }
+
   register(workerId) {
     this.workerRepository.register(workerId);
   }

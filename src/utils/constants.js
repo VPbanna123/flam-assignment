@@ -11,6 +11,9 @@ export const CONFIG_KEYS = Object.freeze({
   BACKOFF_BASE: 'backoff_base',
   POLL_INTERVAL_MS: 'poll_interval_ms',
   JOB_TIMEOUT_MS: 'job_timeout_ms',
+  JOB_LEASE_MS: 'job_lease_ms',
+  JOB_HEARTBEAT_INTERVAL_MS: 'job_heartbeat_interval_ms',
+  RECOVERY_INTERVAL_MS: 'recovery_interval_ms',
   WORKER_STOP_REQUESTED: 'worker_stop_requested'
 });
 
@@ -19,6 +22,9 @@ export const DEFAULT_CONFIG = Object.freeze({
   [CONFIG_KEYS.BACKOFF_BASE]: '2',
   [CONFIG_KEYS.POLL_INTERVAL_MS]: '500',
   [CONFIG_KEYS.JOB_TIMEOUT_MS]: '30000',
+  [CONFIG_KEYS.JOB_LEASE_MS]: '30000',
+  [CONFIG_KEYS.JOB_HEARTBEAT_INTERVAL_MS]: '10000',
+  [CONFIG_KEYS.RECOVERY_INTERVAL_MS]: '10000',
   [CONFIG_KEYS.WORKER_STOP_REQUESTED]: 'false'
 });
 
@@ -27,10 +33,16 @@ export const VALID_CONFIG_ALIASES = Object.freeze({
   'backoff-base': CONFIG_KEYS.BACKOFF_BASE,
   'poll-interval-ms': CONFIG_KEYS.POLL_INTERVAL_MS,
   'job-timeout-ms': CONFIG_KEYS.JOB_TIMEOUT_MS,
+  'job-lease-ms': CONFIG_KEYS.JOB_LEASE_MS,
+  'job-heartbeat-interval-ms': CONFIG_KEYS.JOB_HEARTBEAT_INTERVAL_MS,
+  'recovery-interval-ms': CONFIG_KEYS.RECOVERY_INTERVAL_MS,
   max_retries: CONFIG_KEYS.MAX_RETRIES,
   backoff_base: CONFIG_KEYS.BACKOFF_BASE,
   poll_interval_ms: CONFIG_KEYS.POLL_INTERVAL_MS,
-  job_timeout_ms: CONFIG_KEYS.JOB_TIMEOUT_MS
+  job_timeout_ms: CONFIG_KEYS.JOB_TIMEOUT_MS,
+  job_lease_ms: CONFIG_KEYS.JOB_LEASE_MS,
+  job_heartbeat_interval_ms: CONFIG_KEYS.JOB_HEARTBEAT_INTERVAL_MS,
+  recovery_interval_ms: CONFIG_KEYS.RECOVERY_INTERVAL_MS
 });
 
 export const WORKER_STATUS = Object.freeze({

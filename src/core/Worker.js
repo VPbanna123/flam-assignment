@@ -22,6 +22,7 @@ export class Worker {
     this.lockManager = new LockManager(jobRepository);
     this.retryManager = new RetryManager(configRepository);
     this.stopping = false;
+    this.lastRecoveryAt = 0;
   }
 
   requestStop() {
@@ -35,7 +36,10 @@ export class Worker {
     try {
       while (!this.stopping && !this.workerService.shouldStop()) {
         this.workerService.heartbeat(this.workerId);
-        const job = this.lockManager.claimNext(this.workerId);
+        this.recoverExpiredJobs();
+        const job = this.lockManager.claimNext(this.workerId, {
+          leaseMs: this.workerService.getJobLeaseMs()
+        });
 
         if (!job) {
           await sleep(this.workerService.getPollIntervalMs());
@@ -52,10 +56,26 @@ export class Worker {
 
   async processJob(job) {
     this.logger.info('job.started', { workerId: this.workerId, jobId: job.id, command: job.command });
-    const result = await this.executor.execute(job.command, { timeoutMs: job.timeout_ms });
+    const heartbeat = this.startJobHeartbeat(job.id);
+    let result;
+
+    try {
+      result = await this.executor.execute(job.command, { timeoutMs: job.timeout_ms });
+    } finally {
+      heartbeat.stop();
+    }
 
     if (result.success) {
-      this.jobRepository.markCompleted(job.id, result);
+      const completed = this.jobRepository.markCompleted(job.id, result, this.workerId);
+      if (!completed) {
+        this.logger.warn('job.completion_ignored', {
+          workerId: this.workerId,
+          jobId: job.id,
+          reason: 'lease_lost'
+        });
+        return;
+      }
+
       this.logger.info('job.completed', {
         workerId: this.workerId,
         jobId: job.id,
@@ -67,7 +87,16 @@ export class Worker {
 
     const failure = this.retryManager.buildFailure(job, result);
     if (failure.shouldRetry) {
-      this.jobRepository.markRetryableFailure(job.id, failure);
+      const failed = this.jobRepository.markRetryableFailure(job.id, failure, this.workerId);
+      if (!failed) {
+        this.logger.warn('job.failure_ignored', {
+          workerId: this.workerId,
+          jobId: job.id,
+          reason: 'lease_lost'
+        });
+        return;
+      }
+
       this.logger.warn('job.retry_scheduled', {
         workerId: this.workerId,
         jobId: job.id,
@@ -79,7 +108,16 @@ export class Worker {
       return;
     }
 
-    this.jobRepository.markDead(job.id, failure);
+    const dead = this.jobRepository.markDead(job.id, failure, this.workerId);
+    if (!dead) {
+      this.logger.warn('job.failure_ignored', {
+        workerId: this.workerId,
+        jobId: job.id,
+        reason: 'lease_lost'
+      });
+      return;
+    }
+
     this.logger.error('job.dead', {
       workerId: this.workerId,
       jobId: job.id,
@@ -88,5 +126,52 @@ export class Worker {
       status: 'dead',
       error: failure.errorMessage
     });
+  }
+
+  startJobHeartbeat(jobId) {
+    const heartbeatIntervalMs = this.workerService.getJobHeartbeatIntervalMs();
+    const leaseMs = this.workerService.getJobLeaseMs();
+
+    const renew = () => {
+      this.workerService.heartbeat(this.workerId);
+      const renewed = this.jobRepository.renewLease(jobId, this.workerId, { leaseMs });
+      if (!renewed) {
+        this.logger.warn('job.heartbeat_failed', {
+          workerId: this.workerId,
+          jobId,
+          reason: 'lease_lost'
+        });
+      }
+    };
+
+    const timer = setInterval(renew, heartbeatIntervalMs);
+
+    return {
+      stop() {
+        clearInterval(timer);
+      }
+    };
+  }
+
+  recoverExpiredJobs() {
+    const now = Date.now();
+    const recoveryIntervalMs = this.workerService.getRecoveryIntervalMs();
+
+    if (now - this.lastRecoveryAt < recoveryIntervalMs) {
+      return;
+    }
+
+    this.lastRecoveryAt = now;
+    const recoveredJobs = this.jobRepository.recoverExpiredProcessingJobs();
+
+    for (const job of recoveredJobs) {
+      this.logger.warn('job.recovered', {
+        workerId: this.workerId,
+        jobId: job.id,
+        previousWorkerId: job.worker_id,
+        leaseExpiredAt: job.lease_expires_at,
+        state: 'pending'
+      });
+    }
   }
 }
