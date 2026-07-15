@@ -2,6 +2,8 @@
 
 `queuectl` is a production-style CLI background job queue that stores all state in SQLite and executes shell commands with multiple cooperative workers. It is built from scratch with Node.js, ES modules, `better-sqlite3`, Commander.js, `uuid`, and Jest.
 
+**Demo Video:** [Watch the demo](https://drive.google.com/file/d/1ZDnKa68RmpLK5gOBupBz_8zlsUFAkpae/view?usp=sharing)
+
 No BullMQ, RabbitMQ, Redis Queue, Celery, Agenda, Bree, or existing queue framework is used.
 
 ## Architecture Diagram
